@@ -376,6 +376,18 @@ class AlbumFile {
     return (await this.album.service.getFile(this.descriptor.screenFileId, `screen_${this.descriptor.name}`, this.descriptor.mime)).blob;
   }
 
+  async getFullBlobURL() {
+    return URL.createObjectURL(await this.getFullBlob());
+  }
+
+  async getThumbBlobURL() {
+    return URL.createObjectURL(await this.getThumbBlob());
+  }
+
+  async getScreenBlobURL() {
+    return URL.createObjectURL(await this.getScreenBlob());
+  }
+
   async setAsAlbumThumbnail() {
     try {
       await this.album.ready();
