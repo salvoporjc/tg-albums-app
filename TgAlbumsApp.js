@@ -469,70 +469,122 @@ class AlbumFile {
 
 /*
 USAGE EXAMPLES
+==============
+
+This walkthrough demonstrates the complete lifecycle of using TgAlbumsApp.
+It covers album creation, file uploads (images + video), file management,
+Trash behavior, and root synchronization.
+
 
 (async () => {
+  // --- 1. Initialize service and app ---
   const service = new TgFileService('BOT_TOKEN', 'CHAT_ID');
   const app = new TgAlbumsApp(service);
-  await app.ready();
+  await app.ready(); // ensures root file and Trash album exist
 
-  // Create an album
-  const { ok, album, errors } = await app.createAlbum('Vacations');
-  if (!ok) { console.error('Failed to create album', errors); return; }
+  // --- 2. Create a new album ---
+  const resCreate = await app.createAlbum('Vacations 2025');
+  if (!resCreate.ok) {
+    console.error('Album creation failed:', resCreate.errors);
+    return;
+  }
+  const album = resCreate.album;
   await album.ready();
+  console.log('Album created:', album.name, album.albumId);
 
-  // Add files to album: items = [[Blob, 'name.jpg', 'image/jpeg'], ...]
-  // Note: files with unsupported MIME will be skipped and produce warnings
-  const imgBlob = new Blob([ ...image data... ], { type: 'image/jpeg' });
-  const txtBlob = new Blob(['not an image'], { type: 'text/plain' });
-  const addResult = await album.addFiles([[imgBlob, 'beach.jpg', 'image/jpeg'], [txtBlob, 'note.txt', 'text/plain']]);
-  // addResult => { ok: true, warnings: ['Skipped unsupported MIME type ...'] }
-  if (addResult.warnings) console.warn('Warnings:', addResult.warnings);
+  // --- 3. Add files to the album ---
+  // items = [[Blob, 'filename', 'mime'], ...]
+  const jpegBlob = new Blob(['fake image data'], { type: 'image/jpeg' });
+  const pngBlob = new Blob(['another fake image'], { type: 'image/png' });
+  const txtBlob = new Blob(['plain text'], { type: 'text/plain' }); // will be skipped
+  const videoBlob = new Blob(['fake video data'], { type: 'video/mp4' });
 
-  // List albums
-  const albums = await app.getAlbums();
-  console.log('Albums:', albums.map(a => ({ name: a.name, albumId: a.albumId })));
+  const addRes = await album.addFiles([
+    [jpegBlob, 'beach.jpg', 'image/jpeg'],
+    [pngBlob, 'mountain.png', 'image/png'],
+    [videoBlob, 'trip.mp4', 'video/mp4'], // example video upload
+    [txtBlob, 'note.txt', 'text/plain']   // unsupported MIME -> warning
+  ]);
 
-  // Find albums by name (duplicates allowed)
-  const vacs = await app.findAlbumsByName('Vacations');
-  console.log('Found', vacs.length, 'albums named Vacations');
-
-  // Find album by id
-  const firstAlbum = await app.findAlbumById(vacs[0].albumId);
-
-  // List files
-  const files = await firstAlbum.getFiles();
-  console.log('Files in album:', files.map(f => f.name));
-
-  // Find files by name (may return multiple)
-  const matchingFiles = await firstAlbum.findFilesByName('beach.jpg');
-  if (matchingFiles.length) {
-    const fileObj = matchingFiles[0];
-    // Download full blob
-    const full = await fileObj.getFullBlob();
-    // Move to Trash
-    const rm = await fileObj.removeFromAlbum();
-    console.log('Removed to Trash:', rm);
-
-    // Now restore (call restoreToAlbum on file in Trash)
-    const albumsNow = await app.getAlbums();
-    const trash = albumsNow.find(a => a.name === 'Trash');
-    const trashFiles = await trash.getFiles();
-    const trashed = trashFiles.find(f => f.fullFileId === fileObj.descriptor.fullFileId);
-    const trashedObj = new AlbumFile(trash, trashed);
-    const res = await trashedObj.restoreToAlbum();
-    console.log('Restore result:', res);
-
-    // Or remove forever
-    // const del = await trashedObj.removeForever();
-    // console.log('Removed forever:', del);
+  if (addRes.ok) {
+    console.log('Files added successfully.');
+    if (addRes.warnings) console.warn('Warnings:', addRes.warnings);
+  } else {
+    console.error('Error while adding files:', addRes.errors);
   }
 
-  // Delete album (will fail for Trash)
-  const delAlbumRes = await firstAlbum.deleteAlbum();
-  console.log('Delete album:', delAlbumRes);
+  // --- 4. List all albums ---
+  const albums = await app.getAlbums();
+  console.log('All albums:', albums.map(a => ({
+    name: a.name, id: a.albumId
+  })));
 
-  // Delete all albums (preserves Trash)
-  const delAll = await app.deleteAllAlbums();
-  console.log('Delete all albums:', delAll);
+  // --- 5. Find album by ID ---
+  const sameAlbum = await app.findAlbumById(album.albumId);
+  console.log('Found by ID:', sameAlbum.name);
+
+  // --- 6. Find albums by name (duplicates allowed) ---
+  const vacs = await app.findAlbumsByName('Vacations 2025');
+  console.log('Albums with that name:', vacs.length);
+
+  // --- 7. Get list of files in the album ---
+  const files = await album.getFiles();
+  console.log('Files in album:', files.map(f => f.name));
+
+  // --- 8. Find file by name ---
+  const [firstFileEntry] = files.filter(f => f.name === 'beach.jpg');
+  if (firstFileEntry) {
+    const fileObj = new AlbumFile(album, firstFileEntry);
+
+    // --- 9. Get Blob objects and object URLs ---
+    const thumbBlob = await fileObj.getThumbBlob();
+    const fullURL = await fileObj.getFullBlobURL();
+    console.log('Full file URL:', fullURL);
+    console.log('Thumbnail exists:', !!thumbBlob);
+
+    // --- 10. Set this file as the album’s thumbnail ---
+    const setThumbRes = await fileObj.setAsAlbumThumbnail();
+    console.log('Album thumbnail set:', setThumbRes);
+
+    // --- 11. Move the file to Trash ---
+    const rmRes = await fileObj.removeFromAlbum();
+    console.log('File moved to Trash:', rmRes);
+  }
+
+  // --- 12. Restore a file from Trash ---
+  const albumsNow = await app.getAlbums();
+  const trash = albumsNow.find(a => a.name === 'Trash');
+  await trash.ready();
+  const trashFiles = await trash.getFiles();
+
+  if (trashFiles.length > 0) {
+    const trashedEntry = trashFiles[0];
+    const trashedObj = new AlbumFile(trash, trashedEntry);
+    const restoreRes = await trashedObj.restoreToAlbum();
+    console.log('File restore result:', restoreRes);
+  }
+
+  // --- 13. Permanently delete a file from Trash ---
+  const refreshedTrash = (await app.getAlbums()).find(a => a.name === 'Trash');
+  await refreshedTrash.ready();
+  const refreshedTrashFiles = await refreshedTrash.getFiles();
+
+  if (refreshedTrashFiles.length > 0) {
+    const toDeleteObj = new AlbumFile(refreshedTrash, refreshedTrashFiles[0]);
+    const delRes = await toDeleteObj.removeForever();
+    console.log('File permanently deleted:', delRes);
+  }
+
+  // --- 14. Clear an album (remove all its files, keep Trash) ---
+  const clearRes = await album.clear();
+  console.log('Album cleared:', clearRes);
+
+  // --- 15. Delete an album (Trash cannot be deleted) ---
+  const delAlbumRes = await album.deleteAlbum();
+  console.log('Album deletion result:', delAlbumRes);
+
+  // --- 16. Delete all albums (Trash is preserved but emptied) ---
+  const delAllRes = await app.deleteAllAlbums();
+  console.log('All albums deleted (Trash preserved):', delAllRes);
 })();
 */
